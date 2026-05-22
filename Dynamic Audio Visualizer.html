@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DYNAMIC AUDIO VISUALIZER</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background: #030005;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #visualizer {
+            position: absolute; top: 0; left: 0;
+            width: 100vw; height: 100vh; z-index: 1;
+        }
+
+        #album-container {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 300px; height: 300px; border-radius: 50%;
+            z-index: 5; display: none; 
+            box-shadow: 0 0 60px rgba(0, 0, 0, 0.9);
+            pointer-events: none;
+        }
+
+        #album-art {
+            width: 100%; height: 100%; border-radius: 50%;
+            object-fit: cover; border: 4px solid rgba(255, 255, 255, 0.2);
+            transition: border-color 0.5s ease, box-shadow 0.5s ease;
+        }
+
+        #upload-overlay {
+            position: absolute; inset: 0; background: rgba(5, 0, 8, 0.95);
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            z-index: 10; transition: opacity 0.4s ease; backdrop-filter: blur(15px);
+            display: none; 
+        }
+
+        #upload-overlay.active { display: flex; }
+
+        .upload-btn-wrapper { position: relative; overflow: hidden; display: inline-block; }
+
+        .btn {
+            padding: 20px 45px; background: linear-gradient(45deg, #110022, #330044);
+            color: #fff; border: 2px solid #a200ff; border-radius: 4px;
+            cursor: pointer; font-weight: 900; font-size: 1.5rem;
+            text-transform: uppercase; letter-spacing: 4px;
+            box-shadow: 0 0 30px rgba(162, 0, 255, 0.4); transition: all 0.3s ease;
+        }
+
+        .upload-btn-wrapper:hover .btn {
+            background: linear-gradient(45deg, #a200ff, #ff0055);
+            border-color: #ff0055;
+            transform: scale(1.05); box-shadow: 0 10px 50px rgba(255, 0, 85, 0.6);
+        }
+
+        .upload-btn-wrapper input[type=file] {
+            font-size: 100px; position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer; height: 100%; width: 100%;
+        }
+
+        #mode-selector {
+            position: absolute; bottom: 25px; left: 25px; z-index: 20;
+            display: flex; gap: 10px; background: rgba(10, 0, 15, 0.8);
+            padding: 8px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px);
+        }
+
+        .mode-btn {
+            background: transparent; color: rgba(255,255,255,0.4);
+            border: none; padding: 10px 20px; border-radius: 2px;
+            cursor: pointer; font-weight: bold; font-size: 0.9rem;
+            letter-spacing: 2px; transition: all 0.3s ease;
+        }
+
+        .mode-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.1); }
+        .mode-btn.active { color: #fff; background: rgba(255, 255, 255, 0.2); box-shadow: 0 0 15px rgba(255, 255, 255, 0.2); }
+
+        #color-palette {
+            position: absolute; bottom: 25px; right: 25px; z-index: 20;
+            display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+            opacity: 0; transition: opacity 0.5s ease;
+        }
+        #color-palette.visible { opacity: 1; }
+        .palette-title { color: rgba(255,255,255,0.5); font-size: 0.7rem; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; }
+        .swatch-container { display: flex; gap: 5px; }
+        .color-swatch { width: 30px; height: 30px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2); }
+
+        .track-info {
+            position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 6;
+            color: white; text-align: center; text-shadow: 0 4px 20px rgba(0,0,0,1.0);
+            font-weight: 900; letter-spacing: 4px; opacity: 0.9; text-transform: uppercase;
+        }
+        
+        #audio-element { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="mode-selector">
+        <button id="btn-mic" class="mode-btn">🎙️ LIVE AUDIO</button>
+        <button id="btn-file" class="mode-btn">🎵 FILE</button>
+    </div>
+
+    <div id="color-palette">
+        <div class="palette-title">ACTIVE PALETTE</div>
+        <div class="swatch-container" id="swatches"></div>
+    </div>
+
+    <div id="upload-overlay">
+        <div class="upload-btn-wrapper">
+            <button class="btn">INITIALIZE AUDIO</button>
+            <input type="file" id="audio-upload" accept="audio/*" />
+        </div>
+    </div>
+
+    <div id="album-container">
+        <img id="album-art" src="" alt="Cover Art">
+    </div>
+
+    <div class="track-info" id="track-name">SYSTEM READY</div>
+
+    <audio id="audio-element" controls></audio>
+    <canvas id="visualizer"></canvas>
+
+    <script>
+        const canvas = document.getElementById('visualizer');
+        const uploadOverlay = document.getElementById('upload-overlay');
+        const audioInput = document.getElementById('audio-upload');
+        const audioElement = document.getElementById('audio-element');
+        const albumContainer = document.getElementById('album-container');
+        const albumArt = document.getElementById('album-art');
+        const trackNameDisplay = document.getElementById('track-name');
+        
+        const btnMic = document.getElementById('btn-mic');
+        const btnFile = document.getElementById('btn-file');
+        const paletteContainer = document.getElementById('color-palette');
+        const swatchesDiv = document.getElementById('swatches');
+
+        let audioContext, analyser, micSource, fileSource;
+        let targetDataArray, smoothDataArray, renderDataArray;
+        let gl, program;
+        let animationId;
+        
+        let currentMode = null; 
+        let isGLInitialized = false;
+        let fileLoaded = false;
+        let currentRotation = 0;
+        let smoothedGlobalBass = 0; 
+
+        // Safe Fallback Colors 
+        let exColors = [
+            [1.0, 0.0, 0.3], [0.8, 0.0, 0.5], [0.5, 0.0, 0.8], [0.0, 0.5, 1.0], [0.0, 0.9, 1.0]
+        ];
+
+        const defaultCoverArt = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 300'><rect width='300' height='300' fill='%2305000a'/><circle cx='150' cy='150' r='140' fill='none' stroke='%23ff0055' stroke-width='4' stroke-dasharray='10 5'/><circle cx='150' cy='150' r='40' fill='%23ff0055'/><text x='150' y='140' font-family='sans-serif' font-size='24' font-weight='900' fill='%23ffffff' text-anchor='middle'>AUDIO</text><text x='150' y='170' font-family='sans-serif' font-size='24' font-weight='900' fill='%2300f0ff' text-anchor='middle'>ENGINE</text></svg>";
+
+        // --- BROWSER AUDIO UNLOCK ---
+        window.addEventListener('click', () => {
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+        });
+
+        // --- TRACK END RESET LOGIC ---
+        audioElement.addEventListener('ended', () => {
+            fileLoaded = false;
+            albumArt.src = "";
+            paletteContainer.classList.remove('visible');
+            trackNameDisplay.innerText = "SYSTEM READY";
+            uploadOverlay.classList.add('active');
+            albumContainer.style.display = 'none';
+        });
+
+        // --- BULLETPROOF COLOR EXTRACTOR ---
+        function extract5Colors(imgEl) {
+            try {
+                const tempCanvas = document.createElement('canvas');
+                const ctx = tempCanvas.getContext('2d');
+                tempCanvas.width = 64; tempCanvas.height = 64;
+                ctx.drawImage(imgEl, 0, 0, 64, 64);
+                const data = ctx.getImageData(0, 0, 64, 64).data;
+                
+                let colors = [];
+                for(let i = 0; i < data.length; i += 4) {
+                    let r = data[i], g = data[i+1], b = data[i+2];
+                    // Skip muddy greys and pitch blacks
+                    let max = Math.max(r, g, b); let min = Math.min(r, g, b);
+                    if (max < 40 || min > 220 || (max - min) < 20) continue; 
+                    colors.push({r, g, b});
+                }
+
+                if(colors.length < 10) throw new Error("Image too dark or grey");
+
+                let picked = [];
+                // Find 5 distinct colors
+                for(let i = 0; i < colors.length; i++) {
+                    let c = colors[i];
+                    let distinct = true;
+                    for(let p of picked) {
+                        let dist = Math.abs(c.r - p.r) + Math.abs(c.g - p.g) + Math.abs(c.b - p.b);
+                        if (dist < 80) { distinct = false; break; }
+                    }
+                    if (distinct) picked.push(c);
+                    if (picked.length === 5) break;
+                }
+
+                // Fill blanks if it couldn't find 5 totally unique ones
+                while (picked.length < 5) picked.push(picked[0]);
+
+                swatchesDiv.innerHTML = '';
+                for(let i = 0; i < 5; i++) {
+                    // Feed directly into shader variables (0.0 to 1.0)
+                    exColors[i] = [picked[i].r/255, picked[i].g/255, picked[i].b/255];
+                    
+                    let swatch = document.createElement('div');
+                    swatch.className = 'color-swatch';
+                    swatch.style.backgroundColor = `rgb(${picked[i].r}, ${picked[i].g}, ${picked[i].b})`;
+                    swatchesDiv.appendChild(swatch);
+                }
+                
+                paletteContainer.classList.add('visible');
+                albumArt.style.borderColor = `rgba(${picked[0].r}, ${picked[0].g}, ${picked[0].b}, 0.5)`;
+                albumContainer.style.boxShadow = `0 0 80px rgba(${picked[0].r}, ${picked[0].g}, ${picked[0].b}, 0.4)`;
+
+            } catch(e) {
+                console.log("Extraction failed, using fallback colors.");
+                paletteContainer.classList.remove('visible');
+            }
+        }
+
+        albumArt.onload = function() {
+            if (albumArt.src !== defaultCoverArt) extract5Colors(albumArt);
+        };
+
+        const vsSource = `attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }`;
+
+        // --- BULLETPROOF SHADER ---
+        const fsSource = `
+            precision highp float;
+            uniform vec2 res; 
+            uniform float t; 
+            uniform sampler2D data;
+            uniform float u_bass; 
+            uniform float u_isMic; 
+            
+            uniform vec3 c0; uniform vec3 c1; uniform vec3 c2; uniform vec3 c3; uniform vec3 c4;
+
+            float hash(vec2 p) { return fract(sin(dot(p, vec2(12.98, 78.23))) * 43758.54); }
+            mat2 rot(float a) { float s=sin(a), c=cos(a); return mat2(c,-s,s,c); }
+
+            // Perfectly safe, evenly distributed color wheel. Zero risk of crashing.
+            vec3 getPalette(float v) {
+                v = fract(v);
+                if (v < 0.25) return mix(c0, c1, v / 0.25);
+                if (v < 0.50) return mix(c1, c2, (v - 0.25) / 0.25);
+                if (v < 0.75) return mix(c2, c3, (v - 0.50) / 0.25);
+                return mix(c3, c4, (v - 0.75) / 0.25);
+            }
+
+            void main() {
+                vec2 uv = gl_FragCoord.xy / res; 
+                vec2 st = (uv * 2.0 - 1.0); 
+                st.x *= res.x / res.y;
+                
+                st *= 1.0 - (u_bass * 0.05);
+
+                float angle = atan(st.y, st.x) + 3.14159; 
+                float dist = length(st);
+                
+                // Base Angle for Colors (rotates slowly)
+                float color_angle = fract((angle / 6.2831) + t * 0.05);
+                vec3 base_color = getPalette(color_angle);
+
+                // --- 8 UNEVEN SPIKES MATH ---
+                // Warps the coordinate space so the spikes aren't geometric
+                float warp = sin(angle * 3.0 + t) * 0.15;
+                float fold = abs(fract((angle / 6.2831) * 4.0 + warp) * 2.0 - 1.0);
+                
+                // Map the 8 folded sections into the bass/mid frequencies of the track
+                float band = clamp(fold * 0.45, 0.0, 1.0); 
+                
+                float raw_amp = texture2D(data, vec2(band, 0.5)).r; 
+                
+                // Height variance so some spikes are naturally taller
+                float uneven_mod = 0.7 + 0.3 * sin(angle * 5.0 - t * 2.0);
+                float amp = pow(raw_amp, 2.0) * uneven_mod * 1.2; 
+
+                // Background Dust
+                vec2 p_uv = st * (2.5 - u_bass * 0.3); 
+                vec2 p_id = floor(p_uv); vec2 p_f = fract(p_uv) - 0.5;
+                float p_h = hash(p_id); 
+                float p_mask = smoothstep(0.04 * p_h, 0.0, length(p_f)) * step(0.94, p_h);
+                vec3 background = vec3(0.01, 0.0, 0.02) + base_color * p_mask * (u_bass * 1.5);
+
+                // Bars
+                float r0 = mix(0.44, 0.40, u_isMic); 
+                float r1 = r0 + amp * 0.45; // Max outer bound
+                
+                float segments = 220.0; 
+                float angle_step = (2.0 * 3.14159) / segments;
+                float a_seg = floor(angle / angle_step); 
+                float angle_center = (a_seg + 0.5) * angle_step;
+                float d_to_bar = abs(angle - angle_center); 
+                if (d_to_bar > 3.14159) d_to_bar = abs(d_to_bar - 2.0 * 3.14159);
+                
+                float bar_mask = smoothstep(0.012, 0.002, d_to_bar); 
+                float length_mask = smoothstep(r1, r1 - 0.02, dist) * smoothstep(r0, r0 + 0.01, dist);
+                
+                // No extreme multiplier here to prevent it from turning pure white
+                vec3 spectrum_col = base_color * bar_mask * length_mask;
+                
+                // Soft glow
+                spectrum_col += base_color * exp(-(dist - r1) * 20.0) * smoothstep(r0, r1, dist) * 0.3 * bar_mask;
+                spectrum_col += base_color * exp(-(abs(dist - (r0+r1)/2.0)) * 10.0) * 0.1; 
+
+                vec3 finalCol = background + spectrum_col;
+
+                if (dist < r0) {
+                    vec2 core_st = st / r0;
+                    float ring = smoothstep(0.02, 0.0, abs(length(core_st) - 0.98));
+                    finalCol += base_color * ring * (0.8 + u_bass * 1.2);
+
+                    if (u_isMic > 0.5) {
+                        float rt = t * -1.5; core_st *= rot(rt);
+                        const float k = 1.73205081; vec2 tri_q = core_st * vec2(1.0, -1.0);
+                        tri_q.x = abs(tri_q.x) - 0.5; tri_q.y = tri_q.y + 0.5/k;
+                        if( tri_q.x+k*tri_q.y>0.0 ) tri_q = vec2(tri_q.x-k*tri_q.y,-k*tri_q.x-tri_q.y)/2.0;
+                        tri_q.x -= clamp( tri_q.x, -1.0, 0.0 ); float tri_d = -length(tri_q)*sign(tri_q.y);
+                        
+                        float tri_line = smoothstep(0.02, 0.0, abs(tri_d)); vec3 core_glow = base_color * tri_line * 2.0;
+                        float center_pulse = exp(-abs(tri_d) * (6.0 - u_bass * 2.0)) * (0.5 + u_bass);
+                        core_glow += c2 * center_pulse; 
+                        finalCol += core_glow;
+                    }
+                }
+                
+                finalCol *= 1.0 - pow(length(uv * 2.0 - 1.0), 3.0) * 0.8;
+                gl_FragColor = vec4(finalCol, 1.0);
+            }
+        `;
+
+        function initAudioEngine() {
+            if (audioContext) return;
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 1024; 
+            // Re-enabled a safe smoothing constant to prevent harsh clipping
+            analyser.smoothingTimeConstant = 0.2; 
+            
+            const bufferLength = analyser.frequencyBinCount;
+            targetDataArray = new Uint8Array(bufferLength);
+            smoothDataArray = new Float32Array(bufferLength);
+            renderDataArray = new Uint8Array(bufferLength);
+        }
+
+        function initGL() {
+            if(isGLInitialized) return;
+            gl = canvas.getContext('webgl');
+            const vs = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(vs, vsSource); gl.compileShader(vs);
+            const fs = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(fs, fsSource); gl.compileShader(fs);
+            
+            if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(fs));
+
+            program = gl.createProgram(); gl.attachShader(program, vs); gl.attachShader(program, fs);
+            gl.linkProgram(program); gl.useProgram(program);
+
+            const buffer = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+            const pLoc = gl.getAttribLocation(program, 'p'); gl.enableVertexAttribArray(pLoc); gl.vertexAttribPointer(pLoc, 2, gl.FLOAT, false, 0, 0);
+
+            const texture = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+            isGLInitialized = true; resize(); requestAnimationFrame(render);
+        }
+
+        function resize() {
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = window.innerWidth * dpr; canvas.height = window.innerHeight * dpr;
+            if(gl) gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+
+        async function playLoadedFile() {
+            if (!fileLoaded) return;
+            initAudioEngine();
+            if (audioContext.state === 'suspended') await audioContext.resume();
+
+            try { if(micSource) micSource.disconnect(); } catch(e){}
+            try { analyser.disconnect(); } catch(e){}
+
+            if (!fileSource) fileSource = audioContext.createMediaElementSource(audioElement);
+            fileSource.connect(analyser);
+            analyser.connect(audioContext.destination);
+
+            uploadOverlay.classList.remove('active');
+            albumContainer.style.display = 'block';
+            
+            audioElement.play().catch(e => console.log("Playback error:", e));
+            initGL();
+        }
+
+        // --- HOT SWAP LOGIC ---
+        btnFile.addEventListener('click', () => {
+            if (currentMode === 'file' && fileLoaded) {
+                audioInput.click();
+            } else {
+                setMode('file');
+            }
+        });
+
+        audioInput.addEventListener('click', function(e) {
+            e.target.value = null;
+        });
+
+        async function setMode(mode) {
+            if (currentMode === mode) return;
+            currentMode = mode;
+
+            btnMic.classList.toggle('active', mode === 'mic');
+            btnFile.classList.toggle('active', mode === 'file');
+
+            initAudioEngine();
+            if (audioContext.state === 'suspended') await audioContext.resume();
+
+            try { if(micSource) micSource.disconnect(); } catch(e){}
+            try { analyser.disconnect(); } catch(e){}
+
+            if (mode === 'mic') {
+                audioElement.pause();
+                uploadOverlay.classList.remove('active');
+                albumContainer.style.display = 'none';
+                paletteContainer.classList.remove('visible');
+                trackNameDisplay.innerText = "LIVE INPUT";
+
+                exColors = [[1.0, 0.0, 0.3], [0.8, 0.0, 0.5], [0.5, 0.0, 0.8], [0.0, 0.5, 1.0], [0.0, 0.9, 1.0]];
+
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    micSource = audioContext.createMediaStreamSource(stream);
+                    micSource.connect(analyser);
+                    
+                    // Silent destination connection required by some browsers to keep Mic processing alive
+                    const silentNode = audioContext.createGain();
+                    silentNode.gain.value = 0;
+                    micSource.connect(silentNode);
+                    silentNode.connect(audioContext.destination);
+                    
+                } catch (err) {
+                    alert("Microphone access denied.");
+                    currentMode = null; setMode('file'); return;
+                }
+            } else if (mode === 'file') {
+                if (!fileLoaded) {
+                    uploadOverlay.classList.add('active');
+                    trackNameDisplay.innerText = "AWAITING DATA";
+                    albumContainer.style.display = 'none';
+                } else {
+                    if(albumArt.src && albumArt.src !== defaultCoverArt) extract5Colors(albumArt);
+                    playLoadedFile();
+                }
+            }
+            initGL();
+        }
+
+        audioInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            albumArt.src = ""; 
+            paletteContainer.classList.remove('visible');
+            
+            window.jsmediatags.read(file, {
+                onSuccess: function(tag) {
+                    const tags = tag.tags || {};
+                    if (tags.picture) {
+                        const data = tags.picture.data; const format = tags.picture.format;
+                        let base64String = "";
+                        for (let i = 0; i < data.length; i++) base64String += String.fromCharCode(data[i]);
+                        albumArt.src = `data:${format};base64,${window.btoa(base64String)}`;
+                    } else { albumArt.src = defaultCoverArt; }
+                    trackNameDisplay.innerText = (tags.title && tags.artist) ? `${tags.artist} - ${tags.title}` : file.name;
+                },
+                onError: function() {
+                    albumArt.src = defaultCoverArt; trackNameDisplay.innerText = file.name;
+                }
+            });
+
+            audioElement.src = URL.createObjectURL(file);
+            fileLoaded = true;
+            
+            if(currentMode === 'file') playLoadedFile();
+            else setMode('file');
+        });
+
+        function render(now) {
+            analyser.getByteFrequencyData(targetDataArray);
+            let bSum = 0;
+            
+            // Gain multiplier for Mic (Mics are naturally quieter than MP3s)
+            let gain = (currentMode === 'mic') ? 2.5 : 1.0;
+            
+            for(let i = 0; i < targetDataArray.length; i++) {
+                let raw_val = (targetDataArray[i] / 255.0) * gain;
+                let val = Math.pow(Math.min(raw_val, 1.0), 1.6); // Compression curve
+                
+                // Attack & Decay
+                if (val > smoothDataArray[i]) {
+                    smoothDataArray[i] += (val - smoothDataArray[i]) * 0.5; 
+                } else {
+                    smoothDataArray[i] += (val - smoothDataArray[i]) * 0.1; 
+                }
+                
+                renderDataArray[i] = Math.floor(smoothDataArray[i] * 255);
+                if (i > 0 && i <= 8) bSum += smoothDataArray[i]; 
+            }
+            
+            let sysBass = bSum / 8.0;
+            smoothedGlobalBass += (sysBass - smoothedGlobalBass) * 0.2;
+            
+            if (currentMode === 'file' && fileLoaded) {
+                currentRotation += 0.05 + (smoothedGlobalBass * 0.5); 
+                let scale = 1.0 + (smoothedGlobalBass * 0.06);
+                albumContainer.style.transform = `translate(-50%, -50%) scale(${scale}) rotate(${currentRotation}deg)`;
+            }
+            
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, renderDataArray.length, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, renderDataArray);
+            gl.uniform2f(gl.getUniformLocation(program, 'res'), canvas.width, canvas.height);
+            gl.uniform1f(gl.getUniformLocation(program, 't'), now * 0.001);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_bass'), smoothedGlobalBass);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_isMic'), currentMode === 'mic' ? 1.0 : 0.0);
+            
+            gl.uniform3f(gl.getUniformLocation(program, 'c0'), exColors[0][0], exColors[0][1], exColors[0][2]);
+            gl.uniform3f(gl.getUniformLocation(program, 'c1'), exColors[1][0], exColors[1][1], exColors[1][2]);
+            gl.uniform3f(gl.getUniformLocation(program, 'c2'), exColors[2][0], exColors[2][1], exColors[2][2]);
+            gl.uniform3f(gl.getUniformLocation(program, 'c3'), exColors[3][0], exColors[3][1], exColors[3][2]);
+            gl.uniform3f(gl.getUniformLocation(program, 'c4'), exColors[4][0], exColors[4][1], exColors[4][2]);
+            
+            gl.drawArrays(gl.TRIANGLES, 0, 3);
+            animationId = requestAnimationFrame(render);
+        }
+
+        btnMic.addEventListener('click', () => setMode('mic'));
+        window.addEventListener('resize', resize);
+        
+        // --- DEFAULT TO MIC ON LOAD ---
+        setMode('mic'); 
+    </script>
+</body>
+</html>
